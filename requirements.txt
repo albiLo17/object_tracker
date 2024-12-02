@@ -1,0 +1,9 @@
+wrapt
+gast
+opencv-python 
+pycocotools 
+matplotlib 
+onnxruntime 
+onnx
+open3d
+protobuf==3.20.3

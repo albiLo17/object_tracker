@@ -1,0 +1,8 @@
+.vscode/
+data/
+GroundingDINO/
+segment-anything/
+XMem/
+tracker/ckpts/
+tracker/XMem/
+tracker/__pycache__/
