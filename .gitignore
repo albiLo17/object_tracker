@@ -6,3 +6,11 @@ XMem/
 tracker/ckpts/
 tracker/XMem/
 tracker/__pycache__/
+
+piper_datasets/
+ckpts/
+*.png
+debug_mask_gifs/
+
+# all __pycache__ directories
+**/__pycache__/

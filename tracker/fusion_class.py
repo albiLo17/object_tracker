@@ -8,8 +8,6 @@ import torchvision.transforms as T
 from groundingdino.util.inference import Model as GroundingDINOModel
 from segment_anything import sam_model_registry, SamPredictor, build_sam
 import groundingdino
-from groundingdino.util.inference import Model as GroundingDINOModel
-from segment_anything import build_sam, SamPredictor
 import sys
 
 # append to the system path the path to the installation of XMEM.
@@ -49,11 +47,10 @@ class Fusion():
         # self.dinov2_feat_extractor.to(dtype=self.dtype)
         
         # load GroundedSAM model
-        curr_path = os.path.dirname(os.path.abspath(__file__))
-        config_file = os.path.join(groundingdino.__path__[0], 'config/GroundingDINO_SwinT_OGC.py')
-        grounded_checkpoint = os.path.join(curr_path, 'ckpts/groundingdino_swint_ogc.pth')
-        # config_file = os.path.join(curr_path, '../gdino_config/GroundingDINO_SwinB.cfg.py')
-        # grounded_checkpoint = os.path.join(curr_path, 'ckpts/groundingdino_swinb_cogcoor.pth')
+        curr_path = os.getcwd()
+        config_file = f'{curr_path}/config/GroundingDINO_SwinT_OGC.py'
+        grounded_checkpoint = f"{curr_path}/ckpts/groundingdino_swint_ogc.pth"
+        config_file = f'{curr_path}/dino_config/GroundingDINO_SwinT_OGC.py'
         if not os.path.exists(grounded_checkpoint):
             print('Downloading GroundedSAM model...')
             ckpts_dir = os.path.join(curr_path, 'ckpts')
@@ -62,6 +59,7 @@ class Fusion():
             # os.system(f'mv groundingdino_swinb_cogcoor.pth {ckpts_dir}')
             os.system('wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth')
             os.system(f'mv groundingdino_swint_ogc.pth {ckpts_dir}')
+
         sam_checkpoint = os.path.join(curr_path, 'ckpts/sam_vit_h_4b8939.pth')
         if not os.path.exists(sam_checkpoint):
             print('Downloading SAM model...')
@@ -69,8 +67,9 @@ class Fusion():
             os.system(f'mkdir -p {ckpts_dir}')
             os.system('wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth')
             os.system(f'mv sam_vit_h_4b8939.pth {ckpts_dir}')
+        
+        
         self.ground_dino_model = GroundingDINOModel(config_file, grounded_checkpoint, device=self.device)
-
         self.sam_model = SamPredictor(build_sam(checkpoint=sam_checkpoint))
         self.sam_model.model = self.sam_model.model.to(self.device)
         

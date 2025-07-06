@@ -11,8 +11,8 @@ from tracker.camera_utils import (
     farthest_point_sampling,
     compute_edges_index,
 )
-from tracker.file_manager import Trajectory
-from tracker.fusion_class import Fusion
+# from tracker.file_manager import Trajectory
+from tracker.fusion_class import Fusion, grounded_instance_sam_new_ver
 from tracker.viz import plot_pcd_list, plot_mesh
 import copy
 import json
@@ -275,9 +275,11 @@ class MaskSelectionInterface:
 
 
 class TrackerMultiView:
-    def __init__(self, camera_names, camera_config_path, labels=["cloth", "gripper"]):
+    def __init__(self, camera_names, camera_config_path=None, labels=["cloth", "gripper"]):
         self.camera_names = camera_names
-        self.cameras = [Camera(camera_name=name, camera_id=i, config_path=camera_config_path) for i, name in enumerate(camera_names)]
+        # this is not use at the moment
+        if camera_config_path is not None:
+            self.cameras = [Camera(camera_name=name, camera_id=i, config_path=camera_config_path) for i, name in enumerate(camera_names)]
         
         self.labels = labels
         
@@ -291,8 +293,44 @@ class TrackerMultiView:
     def get_init_masks(self, rgb_images, labels):
         masks_cameras = {camera: {} for camera in self.camera_names}
         for camera, rgb_image in zip(self.camera_names, rgb_images):
-            final_masks = self.mask_selection_interface.generate_mask(rgb_image, labels=labels)
-            masks_cameras[camera] = final_masks
+            # implement using GroundedSAM for this
+            pass
+        for camera, rgb_image in zip(self.camera_names, rgb_images):
+                # Make sure the image is BGR if needed
+                image_bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+
+                # Get masks, labels, confidences
+                masks, all_labels, confidences = grounded_instance_sam_new_ver(
+                    image=image_bgr,
+                    text_prompts=labels,
+                    dino_model=self.fusion.ground_dino_model,
+                    sam_model=self.fusion.sam_model,
+                    box_thresholds=[0.3],   # adjust as you prefer
+                    merge_all=False,
+                    device="cuda:0"
+                )
+
+                final_mask = {}
+
+                for label in labels:
+                    # Get all indices in all_labels that match this label
+                    matching_indices = [i for i, l in enumerate(all_labels) if l == label]
+                    
+                    if not matching_indices:
+                        print(f"Warning: no detections found for label '{label}'")
+                        H, W = image_bgr.shape[:2]
+                        final_mask[label] = np.zeros((H, W), dtype=np.uint8)
+                        continue
+
+                    # Pick the index with the highest confidence
+                    confidences_for_label = [confidences[i] for i in matching_indices]
+                    best_idx = matching_indices[np.argmax(confidences_for_label)]
+
+                    final_mask[label] = masks[best_idx]
+
+                masks_cameras[camera] = final_mask
+            # final_masks = self.mask_selection_interface.generate_mask(rgb_image, labels=labels)
+            # masks_cameras[camera] = final_masks
         return masks_cameras
     
     def prepare_xmem_input(self, rgb_images, masks_cameras=None):
@@ -340,6 +378,11 @@ class TrackerMultiView:
         self.t += 1
         
         return masks_cameras
+    
+    def reset(self):
+        self.fusion.xmem_first_mask_loaded = False
+        self.t = 0
+        print("Tracker reset.")
 
 
 if __name__ == '__main__':
@@ -366,7 +409,6 @@ if __name__ == '__main__':
     tracker = TrackerMultiView(camera_names=camera_names, camera_config_path=config_path, labels=labels) 
     mask_selection_interface = MaskSelectionInterface(sam_predictor=tracker.fusion.sam_model)
     
-
     rgb_image = rgbs[camera_names[0]][0]  
     
     # show image 

@@ -47,7 +47,7 @@ conda activate tracker
 
 
 ### 3. Install the project dependencies
-If you have a CUDA environment, make sure that the variable `CUDA_HOME` is set.
+<!-- If you have a CUDA environment, make sure that the variable `CUDA_HOME` is set.
 To check if `CUDA_HOME` is set, run:
    ```bash
    echo $CUDA_HOME
@@ -59,12 +59,12 @@ export CUDA_HOME=/path/to/cuda-11.3
 Replace `/path/to/cuda-11.3` with the actual path where your CUDA toolkit is installed. You can find this path by running:
    ```bash
 which nvcc
-   ```
-Setup the environment first:
+   ``` -->
+Setup the environment by running:
 ```bash
 bash setup_env.sh
 ```
-
+<!-- 
 Install GroundingDINO:
 ```bash
 git clone https://github.com/IDEA-Research/GroundingDINO.git
@@ -79,7 +79,7 @@ git clone https://github.com/facebookresearch/segment-anything.git
 cd segment-anything
 pip install -e .
 cd ..
-```
+``` -->
 
 Install XMem:
 ```bash
@@ -89,7 +89,7 @@ pip install -r requirements.txt
 cd ..
 ```
 
-Export XMem path to your `PYTHONPATH` variable:
+Remember to export XMem path to your `PYTHONPATH` variable:
 ```bash
 export PYTHONPATH=$PYTHONPATH:<path-to-folder>/object_tracker
 export PYTHONPATH=$PYTHONPATH:<path-to-folder>/object_tracker/XMem
