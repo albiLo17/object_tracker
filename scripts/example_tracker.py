@@ -277,7 +277,7 @@ if __name__ == "__main__":
     output_dir = Path("../output/robot_oculus_teleop_sam")
     if not output_dir.exists():
         output_dir.mkdir()
-    # save_pc_list(point_clouds, output_dir / 'point_clouds')
-    # save_pc_list(original_point_clouds, output_dir / 'original_point_clouds')
+    save_pc_list(point_clouds, output_dir / 'point_clouds')
+    save_pc_list(original_point_clouds, output_dir / 'original_point_clouds')
     save_depth_as_heatmaps(depths, masks, images, output_dir=output_dir, save_original=False)
 
