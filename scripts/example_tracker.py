@@ -6,15 +6,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from transformers import Sam3TrackerVideoModel, Sam3TrackerVideoProcessor, AutoImageProcessor, AutoModelForDepthEstimation
-from transformers import Sam2VideoModel, Sam2VideoProcessor
 from accelerate import Accelerator
+
+from image_processing import Segmenter, DepthEstimator, align_depth, project_depth
 
 from data import sim_data_loader, robot_data_loader, load_frames_from_directory, zed_camera_dataloader
 
 import open3d as o3d
-
-
 
 # from fusion_class import Fusion
 
@@ -40,63 +38,6 @@ def save_pc_list(pc_list, folder_name="point_clouds"):
         save_pc(pc, filename)
 
     print("Done.")
-
-
-def align_depth_torch(noisy_metric, mono_depth):
-    """
-    Fits mono_depth to noisy_metric using Least Squares:
-    noisy_metric ≈ s * mono_depth + t
-    """
-    # 1. Create mask for valid pixels (ignore sensor holes/zeros)
-    mask = (noisy_metric > 0.1) & (mono_depth > 0)
-
-    # Flatten to 1D for the linear system
-    target = noisy_metric[mask].view(-1, 1)  # Metric (Y)
-    source = mono_depth[mask].view(-1, 1)  # Mono (X)
-
-    # 2. Build design matrix A = [source, 1]
-    ones = torch.ones_like(source)
-    A = torch.cat([source, ones], dim=1)
-
-    # 3. Solve Ax = B (Returns [scale, shift])
-    # rcond=None handles potential rank deficiencies
-    solution = torch.linalg.lstsq(A, target).solution
-    s, t = solution[0][0], solution[1][0]
-
-    # 4. Transform the full mono depth map
-    aligned_depth = s * mono_depth + t
-    return torch.clamp(aligned_depth, min=0.0)
-
-
-def project_depth(depth, mask, intrinsics, device="cuda"):
-    """
-    Projects a single depth and mask pair into a 3D point cloud.
-    OpenCV Convention: x-right, y-down, z-forward.
-    """
-    # 1. Prepare tensors (ensure 2D and correct device)
-    d = depth.detach().to(device).squeeze()
-    m = mask.detach().to(device).squeeze().bool()
-
-    h, w = d.shape
-
-    # 2. Generate coordinate grids for this specific frame size
-    v, u = torch.arange(h, device=device), torch.arange(w, device=device)
-    uu, vv = torch.meshgrid(u, v, indexing='xy')
-
-    # 3. Sparse Extraction
-    # We only pull values where the mask is True
-    z_sparse = d[m]
-    u_sparse = uu[m]
-    v_sparse = vv[m]
-
-    # 4. 3D Back-projection Math
-    # $x = (u - c_x) * z / f_x$
-    # $y = (v - c_y) * z / f_y$
-    x_sparse = (u_sparse - intrinsics.cx) * z_sparse / intrinsics.fx
-    y_sparse = (v_sparse - intrinsics.cy) * z_sparse / intrinsics.fy
-
-    # 5. Stack into [N, 3]
-    return torch.stack([x_sparse, y_sparse, z_sparse], dim=-1)
 
 
 def save_depth_as_heatmaps(depth_list, mask_list, image_list, output_dir, cmap_name='magma', save_original=True):
@@ -171,14 +112,8 @@ if __name__ == "__main__":
 
     # Model preparation
     device = Accelerator().device
-    # sam_model = Sam3TrackerVideoModel.from_pretrained("facebook/sam3").to(device, dtype=torch.bfloat16)
-    # sam_processor = Sam3TrackerVideoProcessor.from_pretrained("facebook/sam3")
-    sam_model = Sam2VideoModel.from_pretrained("facebook/sam2.1-hiera-tiny").to(device, dtype=torch.bfloat16)
-    sam_processor = Sam2VideoProcessor.from_pretrained("facebook/sam2.1-hiera-tiny")
-    # fusion_model = Fusion(1)
-
-    depth_model = AutoModelForDepthEstimation.from_pretrained("depth-anything/Depth-Anything-V2-Small-hf", device_map="auto")
-    depth_processor = AutoImageProcessor.from_pretrained("depth-anything/Depth-Anything-V2-Small-hf")
+    sam_model = Segmenter(model='sam2-tiny', device=device)
+    depth_model = DepthEstimator(device=device)
 
     # Data loading
     # h5_path = Path("../data/fold/fold_meshes_with_hole_3meshes_3cams_seed_2026.h5")
@@ -197,21 +132,8 @@ if __name__ == "__main__":
     input_points = [[[[300, 220], [575, 250], [800, 180], [800, 460], [770, 360]]]]     # ocolus_teleop
     input_labels=[[[1, 1, 1, 1, 0]]]                         # ocolus_teleop
     # Initialize session for streaming
-    inference_session = sam_processor.init_video_session(
-        inference_device=device,
-        dtype=torch.bfloat16,
-    )
 
-    # Add point input on first frame
-    sam_inputs = sam_processor(images=images[0], device=device, return_tensors="pt")
-    sam_processor.add_inputs_to_inference_session(
-        inference_session=inference_session,
-        frame_idx=0,
-        obj_ids=1,
-        input_points=input_points,
-        input_labels=input_labels,
-        original_size=sam_inputs.original_sizes[0],  # need to be provided when using streaming video inference
-    )
+    sam_model.initialize(image_shape=images[0].shape, input_points=input_points, input_labels=input_labels)
 
     depths = []
     masks = []
@@ -221,30 +143,11 @@ if __name__ == "__main__":
     # Process frames one by one
     t1 = time.time()
     for frame_idx, frame in enumerate(images):
-        # if frame_idx == 0:
-        sam_inputs = sam_processor(images=frame, device=device, return_tensors="pt")
-        # Process current frame
-        sam_tracker_video_output = sam_model(inference_session=inference_session, frame=sam_inputs.pixel_values[0])
-        video_res_masks = sam_processor.post_process_masks(
-            [sam_tracker_video_output.pred_masks], original_sizes=sam_inputs.original_sizes, binarize=False
-        )[0]
-
-        mask = video_res_masks[0][0] > 0
-            # fusion_model.xmem_process([frame], mask[None, :, :])
-
-        depth_inputs = depth_processor(images=frame, return_tensors="pt").to(device)
-        with torch.no_grad():
-            outputs = depth_model(**depth_inputs)
-        post_processed_output = depth_processor.post_process_depth_estimation(
-            outputs,
-            target_sizes=[(frame.shape[0], frame.shape[1])],
-        )
-        depth_prediction = post_processed_output[0]['predicted_depth']
-
-        # mask = fusion_model.xmem_process([frame], None)[0, :, :, 1]
+        mask = sam_model.estimate_mask(frame)
+        depth_prediction = depth_model.estimate_depth(frame)
 
         metric_depth = torch.tensor(metric_depths[frame_idx], dtype=torch.float32, device=device)
-        aligned_depth = align_depth_torch(metric_depth, depth_prediction)
+        aligned_depth = align_depth(metric_depth, depth_prediction)
         point_cloud = project_depth(aligned_depth, mask, intrinsics_depth, device=device)
         original_point_cloud = project_depth(metric_depth, mask, intrinsics_depth, device=device)
 
